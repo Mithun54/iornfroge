@@ -139,7 +139,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   // - Set RESEND_FROM_EMAIL to e.g. 'IRONFORGE Concierge <contact@yourdomain.com>'
   // - Set ADMIN_EMAIL to your preferred gym administration inbox
   const fromEmail = process.env.RESEND_FROM_EMAIL || 'IRONFORGE Concierge <onboarding@resend.dev>';
-  const toEmail = process.env.ADMIN_EMAIL || process.env.CONTACT_TO_EMAIL || 'concierge@ironforgefitness.com';
+  const toEmail = 'mithunmessi39@gmail.com';
 
   const slotInfo = timeSlot && typeof timeSlot === 'string' ? timeSlot.trim() : 'Not specified';
 
