@@ -1,8 +1,23 @@
 import React, { useState } from 'react';
-import { MapPin, Phone, Mail, Clock, Send, CheckCircle2, Navigation } from 'lucide-react';
+import { MapPin, Phone, Mail, Clock, Send, CheckCircle2, Navigation, Loader2, AlertCircle } from 'lucide-react';
+
+interface FormState {
+  name: string;
+  email: string;
+  phone: string;
+  timeSlot: string;
+  message: string;
+}
+
+interface FormErrors {
+  name?: string;
+  email?: string;
+  phone?: string;
+  message?: string;
+}
 
 export const Contact: React.FC = () => {
-  const [formData, setFormData] = useState({
+  const [formData, setFormData] = useState<FormState>({
     name: '',
     email: '',
     phone: '',
@@ -10,16 +25,121 @@ export const Contact: React.FC = () => {
     message: '',
   });
 
+  const [honeypot, setHoneypot] = useState('');
+  const [errors, setErrors] = useState<FormErrors>({});
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitted, setSubmitted] = useState(false);
   const [loading, setLoading] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  // Frontend validation
+  const validate = (): boolean => {
+    const newErrors: FormErrors = {};
+
+    // 1. Name validation
+    const trimmedName = formData.name.trim();
+    if (!trimmedName) {
+      newErrors.name = 'Full name is required';
+    } else if (trimmedName.length < 2) {
+      newErrors.name = 'Name must be at least 2 characters';
+    }
+
+    // 2. Email validation
+    const trimmedEmail = formData.email.trim();
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!trimmedEmail) {
+      newErrors.email = 'Email address is required';
+    } else if (!emailRegex.test(trimmedEmail)) {
+      newErrors.email = 'Please enter a valid email address';
+    }
+
+    // 3. Phone validation (Indian phone number where appropriate or international E.164)
+    const trimmedPhone = formData.phone.trim();
+    const sanitizedPhone = trimmedPhone.replace(/[\s\-()]/g, '');
+    const indianPhoneRegex = /^(?:(?:\+|0{0,2})91)?[6-9]\d{9}$/;
+    const intlPhoneRegex = /^\+[1-9]\d{9,14}$/;
+
+    if (!trimmedPhone) {
+      newErrors.phone = 'Phone number is required';
+    } else if (!indianPhoneRegex.test(sanitizedPhone) && !intlPhoneRegex.test(sanitizedPhone)) {
+      newErrors.phone = 'Please enter a valid 10-digit Indian phone number';
+    }
+
+    // 4. Message validation
+    const trimmedMessage = formData.message.trim();
+    if (!trimmedMessage) {
+      newErrors.message = 'Message is required';
+    } else if (trimmedMessage.length < 10) {
+      newErrors.message = 'Message must be at least 10 characters';
+    }
+
+    setErrors(newErrors);
+    return Object.keys(newErrors).length === 0;
+  };
+
+  const handleChange = (field: keyof FormState, value: string) => {
+    setFormData(prev => ({ ...prev, [field]: value }));
+    // Clear field-level error as user types
+    if (errors[field as keyof FormErrors]) {
+      setErrors(prev => ({ ...prev, [field]: undefined }));
+    }
+    if (submitError) {
+      setSubmitError(null);
+    }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setSubmitError(null);
+
+    // 1. Validate the form
+    if (!validate()) {
+      return;
+    }
+
+    // 2. Disable submit button & set loading state
     setLoading(true);
-    setTimeout(() => {
+
+    try {
+      // 4. Send request to /api/contact
+      const response = await fetch('/api/contact', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          name: formData.name.trim(),
+          email: formData.email.trim(),
+          phone: formData.phone.trim(),
+          timeSlot: formData.timeSlot,
+          message: formData.message.trim(),
+          website: honeypot, // Spam honeypot
+        }),
+      });
+
+      const data = await response.json().catch(() => null);
+
+      if (response.ok && data?.success !== false) {
+        // 5. Successful: show confirmation message & 6. Clear form
+        setSubmitted(true);
+        setFormData({
+          name: '',
+          email: '',
+          phone: '',
+          timeSlot: 'Morning (6 AM - 11 AM)',
+          message: '',
+        });
+        setHoneypot('');
+        setErrors({});
+      } else {
+        // 7. Unsuccessful: show user-friendly message without technical details
+        setSubmitError('Something went wrong. Please try again.');
+      }
+    } catch {
+      // 7. Unsuccessful on network/connection failure
+      setSubmitError('Something went wrong. Please try again.');
+    } finally {
       setLoading(false);
-      setSubmitted(true);
-    }, 700);
+    }
   };
 
   return (
@@ -174,12 +294,12 @@ export const Contact: React.FC = () => {
                     TOUR RESERVATION RECEIVED
                   </h4>
                   <p className="text-xs sm:text-sm text-zinc-300 max-w-md px-2">
-                    Thank you, <strong className="text-gold-300">{formData.name}</strong>. Our concierge has reserved your VIP session. A member of our team will call or WhatsApp <span className="font-mono text-white">{formData.phone}</span> shortly to confirm your time.
+                    Thank you! Your request has been received. We'll contact you shortly.
                   </p>
                   <button
                     onClick={() => {
                       setSubmitted(false);
-                      setFormData({ name: '', email: '', phone: '', timeSlot: 'Morning (6 AM - 11 AM)', message: '' });
+                      setSubmitError(null);
                     }}
                     className="mt-4 px-6 py-2.5 rounded-lg bg-white/10 hover:bg-white/20 text-xs font-bold uppercase tracking-wider text-white transition-colors"
                   >
@@ -187,7 +307,27 @@ export const Contact: React.FC = () => {
                   </button>
                 </div>
               ) : (
-                <form onSubmit={handleSubmit} className="space-y-4 sm:space-y-5">
+                <form onSubmit={handleSubmit} noValidate className="space-y-4 sm:space-y-5">
+                  {/* Spam honeypot (invisible to real visitors) */}
+                  <div style={{ display: 'none' }} aria-hidden="true">
+                    <input
+                      type="text"
+                      name="website"
+                      value={honeypot}
+                      onChange={(e) => setHoneypot(e.target.value)}
+                      tabIndex={-1}
+                      autoComplete="off"
+                    />
+                  </div>
+
+                  {/* Submission Error Banner */}
+                  {submitError && (
+                    <div className="p-3.5 rounded-xl bg-red-500/10 border border-red-500/30 text-red-300 text-xs flex items-center gap-2.5 animate-fadeIn">
+                      <AlertCircle className="w-4 h-4 flex-shrink-0 text-red-400" />
+                      <span>{submitError}</span>
+                    </div>
+                  )}
+
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-5">
                     {/* Name */}
                     <div>
@@ -198,10 +338,17 @@ export const Contact: React.FC = () => {
                         type="text"
                         required
                         value={formData.name}
-                        onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                        onChange={(e) => handleChange('name', e.target.value)}
                         placeholder="e.g. Rahul Sharma"
-                        className="w-full min-h-[46px] px-3.5 sm:px-4 py-2.5 sm:py-3 rounded-xl bg-dark-900 border border-white/10 focus:border-gold-400 focus:outline-none focus:ring-1 focus:ring-gold-400 text-xs sm:text-sm text-white placeholder-zinc-600 transition-colors"
+                        className={`w-full min-h-[46px] px-3.5 sm:px-4 py-2.5 sm:py-3 rounded-xl bg-dark-900 border text-xs sm:text-sm text-white placeholder-zinc-600 transition-colors focus:outline-none ${
+                          errors.name 
+                            ? 'border-red-500/70 focus:border-red-400 focus:ring-1 focus:ring-red-400' 
+                            : 'border-white/10 focus:border-gold-400 focus:ring-1 focus:ring-gold-400'
+                        }`}
                       />
+                      {errors.name && (
+                        <p className="text-[11px] text-red-400 mt-1 font-medium">{errors.name}</p>
+                      )}
                     </div>
 
                     {/* Phone */}
@@ -213,10 +360,17 @@ export const Contact: React.FC = () => {
                         type="tel"
                         required
                         value={formData.phone}
-                        onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
+                        onChange={(e) => handleChange('phone', e.target.value)}
                         placeholder="+91 98765 00000"
-                        className="w-full min-h-[46px] px-3.5 sm:px-4 py-2.5 sm:py-3 rounded-xl bg-dark-900 border border-white/10 focus:border-gold-400 focus:outline-none focus:ring-1 focus:ring-gold-400 text-xs sm:text-sm text-white placeholder-zinc-600 transition-colors"
+                        className={`w-full min-h-[46px] px-3.5 sm:px-4 py-2.5 sm:py-3 rounded-xl bg-dark-900 border text-xs sm:text-sm text-white placeholder-zinc-600 transition-colors focus:outline-none ${
+                          errors.phone 
+                            ? 'border-red-500/70 focus:border-red-400 focus:ring-1 focus:ring-red-400' 
+                            : 'border-white/10 focus:border-gold-400 focus:ring-1 focus:ring-gold-400'
+                        }`}
                       />
+                      {errors.phone && (
+                        <p className="text-[11px] text-red-400 mt-1 font-medium">{errors.phone}</p>
+                      )}
                     </div>
                   </div>
 
@@ -230,10 +384,17 @@ export const Contact: React.FC = () => {
                         type="email"
                         required
                         value={formData.email}
-                        onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                        onChange={(e) => handleChange('email', e.target.value)}
                         placeholder="you@example.com"
-                        className="w-full min-h-[46px] px-3.5 sm:px-4 py-2.5 sm:py-3 rounded-xl bg-dark-900 border border-white/10 focus:border-gold-400 focus:outline-none focus:ring-1 focus:ring-gold-400 text-xs sm:text-sm text-white placeholder-zinc-600 transition-colors"
+                        className={`w-full min-h-[46px] px-3.5 sm:px-4 py-2.5 sm:py-3 rounded-xl bg-dark-900 border text-xs sm:text-sm text-white placeholder-zinc-600 transition-colors focus:outline-none ${
+                          errors.email 
+                            ? 'border-red-500/70 focus:border-red-400 focus:ring-1 focus:ring-red-400' 
+                            : 'border-white/10 focus:border-gold-400 focus:ring-1 focus:ring-gold-400'
+                        }`}
                       />
+                      {errors.email && (
+                        <p className="text-[11px] text-red-400 mt-1 font-medium">{errors.email}</p>
+                      )}
                     </div>
 
                     {/* Preferred Time Window */}
@@ -243,7 +404,7 @@ export const Contact: React.FC = () => {
                       </label>
                       <select
                         value={formData.timeSlot}
-                        onChange={(e) => setFormData({ ...formData, timeSlot: e.target.value })}
+                        onChange={(e) => handleChange('timeSlot', e.target.value)}
                         className="w-full min-h-[46px] px-3.5 sm:px-4 py-2.5 sm:py-3 rounded-xl bg-dark-900 border border-white/10 focus:border-gold-400 focus:outline-none focus:ring-1 focus:ring-gold-400 text-xs sm:text-sm text-white transition-colors"
                       >
                         <option>Morning (6 AM - 11 AM)</option>
@@ -257,25 +418,36 @@ export const Contact: React.FC = () => {
                   {/* Message */}
                   <div>
                     <label className="block text-[11px] sm:text-xs font-bold uppercase tracking-wider text-zinc-400 mb-1.5 sm:mb-2">
-                      Training Goals or Questions (Optional)
+                      Training Goals or Questions *
                     </label>
                     <textarea
                       rows={3}
+                      required
                       value={formData.message}
-                      onChange={(e) => setFormData({ ...formData, message: e.target.value })}
+                      onChange={(e) => handleChange('message', e.target.value)}
                       placeholder="e.g. Interested in Olympic lifting platforms and recovery membership..."
-                      className="w-full px-3.5 sm:px-4 py-2.5 sm:py-3 rounded-xl bg-dark-900 border border-white/10 focus:border-gold-400 focus:outline-none focus:ring-1 focus:ring-gold-400 text-xs sm:text-sm text-white placeholder-zinc-600 transition-colors resize-none"
+                      className={`w-full px-3.5 sm:px-4 py-2.5 sm:py-3 rounded-xl bg-dark-900 border text-xs sm:text-sm text-white placeholder-zinc-600 transition-colors resize-none focus:outline-none ${
+                        errors.message 
+                          ? 'border-red-500/70 focus:border-red-400 focus:ring-1 focus:ring-red-400' 
+                          : 'border-white/10 focus:border-gold-400 focus:ring-1 focus:ring-gold-400'
+                      }`}
                     />
+                    {errors.message && (
+                      <p className="text-[11px] text-red-400 mt-1 font-medium">{errors.message}</p>
+                    )}
                   </div>
 
                   {/* Submit Button */}
                   <button
                     type="submit"
                     disabled={loading}
-                    className="w-full min-h-[50px] py-3.5 sm:py-4 rounded-xl bg-gradient-to-r from-gold-300 via-gold-400 to-gold-600 text-dark-950 font-display font-extrabold text-xs uppercase tracking-[0.2em] shadow-gold-sm hover:opacity-95 active:scale-98 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                    className="w-full min-h-[50px] py-3.5 sm:py-4 rounded-xl bg-gradient-to-r from-gold-300 via-gold-400 to-gold-600 text-dark-950 font-display font-extrabold text-xs uppercase tracking-[0.2em] shadow-gold-sm hover:opacity-95 active:scale-98 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
                   >
                     {loading ? (
-                      <span>PROCESSING RESERVATION...</span>
+                      <span className="flex items-center gap-2">
+                        <Loader2 className="w-4 h-4 animate-spin text-dark-950" />
+                        <span>Sending...</span>
+                      </span>
                     ) : (
                       <>
                         <Send className="w-4 h-4" />
