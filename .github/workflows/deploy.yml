@@ -57,7 +57,7 @@ jobs:
           IMAGE="$IMAGE_URI:$GITHUB_SHA"
 
           DEPLOY_SCRIPT=$(cat <<'SCRIPT'
-          set -Eeuo pipefail
+          set -eu
 
           IMAGE="__IMAGE__"
           REGION="ap-south-1"
