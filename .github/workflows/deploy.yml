@@ -1,0 +1,170 @@
+
+name: Deploy IronForge to AWS
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: ironforge-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+      ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+      EC2_INSTANCE_ID: ${{ vars.EC2_INSTANCE_ID }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials with OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push Docker image
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+        run: |
+          set -euo pipefail
+          IMAGE_URI="$REGISTRY/$ECR_REPOSITORY"
+          docker build -t "$IMAGE_URI:$GITHUB_SHA" .
+          docker push "$IMAGE_URI:$GITHUB_SHA"
+          echo "IMAGE_URI=$IMAGE_URI" >> "$GITHUB_ENV"
+
+      - name: Deploy through AWS Systems Manager
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          IMAGE="$IMAGE_URI:$GITHUB_SHA"
+
+          DEPLOY_SCRIPT=$(cat <<'SCRIPT'
+          set -Eeuo pipefail
+
+          IMAGE="__IMAGE__"
+          REGION="ap-south-1"
+          REGISTRY="691634278287.dkr.ecr.ap-south-1.amazonaws.com"
+          ENV_FILE="/home/ubuntu/ironforge.env"
+
+          if [ ! -f "$ENV_FILE" ]; then
+            echo "Required environment file is missing."
+            exit 1
+          fi
+
+          aws ecr get-login-password --region "$REGION" |
+            docker login --username AWS --password-stdin "$REGISTRY"
+
+          docker pull "$IMAGE"
+
+          HAD_OLD=false
+
+          if docker container inspect ironforge-web >/dev/null 2>&1; then
+            docker stop ironforge-web
+            docker rename ironforge-web ironforge-web-previous
+            HAD_OLD=true
+          fi
+
+          rollback() {
+            RESULT=$?
+            if [ "$RESULT" -ne 0 ]; then
+              docker rm -f ironforge-web >/dev/null 2>&1 || true
+              if [ "$HAD_OLD" = true ]; then
+                docker rename ironforge-web-previous ironforge-web || true
+                docker start ironforge-web || true
+              fi
+            fi
+          }
+          trap rollback EXIT
+
+          docker run -d \
+            --name ironforge-web \
+            --restart unless-stopped \
+            -p 80:3000 \
+            --env-file "$ENV_FILE" \
+            "$IMAGE"
+
+          HEALTHY=false
+          for attempt in $(seq 1 15); do
+            if curl -fsS http://127.0.0.1/ >/dev/null; then
+              HEALTHY=true
+              break
+            fi
+            sleep 2
+          done
+
+          if [ "$HEALTHY" != true ]; then
+            echo "New container failed its HTTP health check."
+            exit 1
+          fi
+
+          if [ "$HAD_OLD" = true ]; then
+            docker rm -f ironforge-web-previous
+          fi
+
+          trap - EXIT
+          echo "IronForge deployment completed successfully."
+          SCRIPT
+          )
+
+          DEPLOY_SCRIPT="${DEPLOY_SCRIPT//__IMAGE__/$IMAGE}"
+
+          PARAMETERS=$(jq -n --arg command "$DEPLOY_SCRIPT" \
+            '{commands: [$command]}')
+
+          COMMAND_ID=$(aws ssm send-command \
+            --instance-ids "$EC2_INSTANCE_ID" \
+            --document-name "AWS-RunShellScript" \
+            --parameters "$PARAMETERS" \
+            --comment "IronForge deployment $GITHUB_SHA" \
+            --query 'Command.CommandId' \
+            --output text)
+
+          echo "SSM command: $COMMAND_ID"
+
+          for attempt in $(seq 1 60); do
+            STATUS=$(aws ssm list-command-invocations \
+              --command-id "$COMMAND_ID" \
+              --details \
+              --query 'CommandInvocations[0].Status' \
+              --output text 2>/dev/null || true)
+
+            echo "Deployment status: $STATUS"
+
+            if [ "$STATUS" = "Success" ]; then
+              exit 0
+            fi
+
+            case "$STATUS" in
+              Failed|TimedOut|Cancelled|Cancelling)
+                aws ssm get-command-invocation \
+                  --command-id "$COMMAND_ID" \
+                  --instance-id "$EC2_INSTANCE_ID" \
+                  --query '{Status:Status,Output:StandardOutputContent,Error:StandardErrorContent}' \
+                  --output json || true
+                exit 1
+                ;;
+            esac
+
+            sleep 5
+          done
+
+          echo "Timed out waiting for SSM deployment."
+          exit 1
