@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { Navbar } from './components/Navbar';
 import { Hero } from './components/Hero';
 import { Stats } from './components/Stats';
@@ -11,6 +11,7 @@ import { Testimonials } from './components/Testimonials';
 import { CTA } from './components/CTA';
 import { Contact } from './components/Contact';
 import { Footer } from './components/Footer';
+import { BackToTop } from './components/BackToTop';
 
 // Modals
 import { BookingModal } from './components/BookingModal';
@@ -21,7 +22,7 @@ import { StoryModal } from './components/StoryModal';
 
 // Types
 import type { Program, Trainer, FacilityItem } from './data/gymData';
-import { ChevronUp, PhoneCall, Sparkles } from 'lucide-react';
+import { PhoneCall, Sparkles } from 'lucide-react';
 
 export function App() {
   const [joinModalOpen, setJoinModalOpen] = useState(false);
@@ -30,15 +31,6 @@ export function App() {
   const [selectedTrainer, setSelectedTrainer] = useState<Trainer | null>(null);
   const [selectedFacility, setSelectedFacility] = useState<FacilityItem | null>(null);
   const [storyModalOpen, setStoryModalOpen] = useState(false);
-  const [showBackToTop, setShowBackToTop] = useState(false);
-
-  useEffect(() => {
-    const handleScroll = () => {
-      setShowBackToTop(window.scrollY > 600);
-    };
-    window.addEventListener('scroll', handleScroll, { passive: true });
-    return () => window.removeEventListener('scroll', handleScroll);
-  }, []);
 
   const handleOpenJoin = (planId?: string) => {
     setSelectedPlan(planId || 'pro');
@@ -57,10 +49,6 @@ export function App() {
     if (progEl) {
       progEl.scrollIntoView({ behavior: 'smooth' });
     }
-  };
-
-  const scrollToTop = () => {
-    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   return (
@@ -125,15 +113,7 @@ export function App() {
       <Footer />
 
       {/* Floating Back-To-Top Button */}
-      {showBackToTop && (
-        <button
-          onClick={scrollToTop}
-          className="fixed bottom-20 lg:bottom-8 right-4 sm:right-6 z-40 p-2.5 sm:p-3 rounded-full bg-dark-900/90 border border-gold-400/30 text-gold-400 hover:text-dark-950 hover:bg-gold-400 transition-all shadow-xl hover:scale-110 active:scale-95 focus:outline-none"
-          aria-label="Scroll back to top"
-        >
-          <ChevronUp className="w-4 h-4 sm:w-5 sm:h-5" />
-        </button>
-      )}
+      <BackToTop />
 
       {/* Mobile Sticky Quick-Action Bar */}
       <div className="fixed bottom-0 inset-x-0 z-40 lg:hidden p-2.5 sm:p-3 bg-dark-950/95 backdrop-blur-xl border-t border-gold-400/20 flex items-center justify-between gap-2.5 sm:gap-3 shadow-2xl safe-area-bottom">
